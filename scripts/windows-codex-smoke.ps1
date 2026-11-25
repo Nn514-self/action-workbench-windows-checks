@@ -47,7 +47,8 @@ const provider = localCodex({bin:process.argv[2],model:'验收 模型'});
 const result = await provider.decide({capabilities:[],tools:[],history:[{role:'user',text:'查询运费 记录参数'}],now:new Date().toISOString()});
 if (result.type !== 'reply' || result.text !== '运费八元') process.exitCode=1;
 '@
-  $capture = Invoke-Isolated -File (Get-Command node.exe -CommandType Application).Source -CommandArgs @('--input-type=module','-e',$probe,$adapter,$fixture)
+  $node = (Get-Command node.exe -CommandType Application | Select-Object -First 1).Source
+  $capture = Invoke-Isolated -File $node -CommandArgs @('--input-type=module','-e',$probe,$adapter,$fixture)
   if ($capture.Code -ne 0) { throw 'Could not capture the packaged adapter arguments' }
   $actual = [IO.File]::ReadAllText((Join-Path $work 'adapter-argv')).Split([char]0)
   if ($actual[-1] -ne '-') { throw 'Expected the adapter to read stdin' }
