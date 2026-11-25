@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { DatabaseSync } from 'node:sqlite';
+import { z } from 'zod';
+import { createBackend, defineModule, query } from 'action-workbench';
+import { createHttpServer } from 'action-workbench/http';
+import { ordersModule } from '../starter/orders.ts';
+
+test('shipping is explainable but cannot be delegated; internal or unauthorized work is absent from model inputs',async t=>{
+  const db=new DatabaseSync(':memory:');
+  const inspect=defineModule('internal',{lookup:query({permission:'inspect',description:'内部核对流水',http:{method:'GET',path:'/internal'},input:z.strictObject({}),output:z.string(),run:()=> 'ledger'})});
+  const api=createBackend({database:db,modules:[ordersModule(db),inspect]});
+  const worker={id:'w',tenantId:'t',permissions:['orders:ship','orders:write','inspect']};
+  const viewer={...worker,permissions:['orders:read']}; const seen=[];
+  const http=createHttpServer(api,{authenticate:r=>r.headers.authorization==='worker'?worker:r.headers.authorization==='viewer'?viewer:null,provider:{label:'contract',async decide(turn){seen.push(turn);return {type:'reply',text:'了解。'}}}});
+  t.after(async()=>{await http.close();db.close()});
+  for(const user of ['worker','viewer']) await http.inject({method:'POST',url:'/_aw/assistant/messages',headers:{authorization:user},payload:{message:'能否发货？'}});
+  const [w,v]=seen;
+  const shipInfo=w.capabilities.find(c=>c.name==='orders.ship');
+  assert.equal(shipInfo.mode,'manual');assert.match(shipInfo.description,/发货/);assert.ok(!('inputSchema' in shipInfo));
+  assert.ok(!w.tools.some(x=>x.name==='orders.ship')); assert.ok(!JSON.stringify(w).includes('internal.lookup'));
+  assert.ok(!JSON.stringify(v).includes('orders.ship')); assert.equal(w.capabilities.find(c=>c.name==='orders.place').mode,'assistant');
+  await assert.rejects(api.invoke(worker,'orders.ship',{},{source:'ai'}),{code:'NOT_FOUND'});
+  const spec=async user=>(await http.inject({method:'GET',url:'/_aw/openapi.json',headers:{authorization:user}})).json();
+  const doc=await spec('worker'); assert.equal(doc.openapi,'3.1.1');assert.ok(doc.paths['/internal']);assert.ok(!JSON.stringify(await spec('viewer')).includes('orders.ship'));
+  const place=doc.paths['/orders'].post, ship=doc.paths['/orders/{orderId}/ship'].post;
+  assert.equal(place.requestBody.content['application/json'].schema.$ref,'#/components/schemas/orders.place.input');
+  assert.deepEqual(doc.components.schemas['orders.place.input'].required,['item']);
+  const created=await http.inject({method:'POST',url:'/orders',headers:{authorization:'worker'},payload:{item:'纸'}});
+  const shipped=await http.inject({method:'POST',url:`/orders/${created.json().result.orderId}/ship`,headers:{authorization:'worker'}});
+  assert.equal(shipped.json().result.status,'shipped'); assert.equal(ship.requestBody,undefined);
+  assert.ok(ship.parameters.some(p=>p.in==='path'&&p.name==='orderId'&&p.required));
+  const resultRef=ship.responses[200].content['application/json'].schema.properties.result.$ref;
+  assert.deepEqual(new Set(doc.components.schemas[resultRef.split('/').at(-1)].required),new Set(Object.keys(shipped.json().result)));
+  assert.equal((await http.inject({method:'GET',url:'/_aw/openapi.json'})).statusCode,401);
+});

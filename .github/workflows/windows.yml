@@ -1,0 +1,52 @@
+name: Windows package qualification
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    name: Windows Server 2025 x64 / Node ${{ matrix.node }}
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22.18.0', '22.x', '24.x', '26.x']
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - name: Verify archive then install pinned dependencies
+        run: |
+          $pkg = (Get-Content -Raw 'example/meeting-rooms/package-lock.json' | ConvertFrom-Json -AsHashtable).packages['node_modules/action-workbench']
+          $file = 'example/meeting-rooms/action-workbench-0.5.0-rc.1.tgz'
+          $digest = 'sha512-' + [Convert]::ToBase64String([Security.Cryptography.SHA512]::HashData([IO.File]::ReadAllBytes((Resolve-Path $file).Path)))
+          if ($digest -cne $pkg.integrity) { throw 'Candidate archive SHA-512 mismatch' }
+          node -e "const a=require('node:assert/strict'); a.equal(process.platform,'win32'); a.equal(process.arch,'x64'); console.log('WINDOWS HOST',require('node:os').release(),process.arch,process.version)"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          tar.exe -xzf $file --strip-components 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd ci --ignore-scripts --engine-strict --no-audit --no-fund --registry=https://registry.npmjs.org
+      - name: Framework behavior and native Windows adapter
+        run: |
+          $tests = @(Get-ChildItem -LiteralPath test -Filter '*.test.js' -File | ForEach-Object FullName)
+          if (-not $tests.Count) { throw 'No framework tests found' }
+          $output = node --test --test-reporter=tap @tests
+          $code = $LASTEXITCODE
+          $output
+          if ($code -ne 0) { exit $code }
+          $text = $output -join "`n"
+          if ($text -notmatch '(?m)^# skipped 0$' -or $text -notmatch '(?m)^ok \d+ - Windows adapter passes UTF-8' -or $text -notmatch '(?m)^# pass (\d+)$') { throw 'Native test did not run, or a test was skipped' }
+          Write-Output "WINDOWS TESTS PASS count=$($Matches[1]) skipped=0"
+      - name: Installed CLI, PowerShell shim, HTTP and durable upgrade
+        run: npm.cmd run compat:check
+      - name: Official native Codex without user credentials
+        if: matrix.node == '24.x'
+        run: ./scripts/windows-codex-smoke.ps1
