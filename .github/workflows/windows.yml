@@ -1,6 +1,11 @@
 name: Windows package qualification
 on:
   workflow_dispatch:
+    inputs:
+      cli_only:
+        description: Only check the real CLI on Node 24
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -11,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ['22.18.0', '22.x', '24.x', '26.x']
+        node: ${{ fromJSON(inputs.cli_only && '["24.x"]' || '["22.18.0","22.x","24.x","26.x"]') }}
     defaults:
       run:
         shell: pwsh
@@ -35,6 +40,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm.cmd ci --ignore-scripts --engine-strict --no-audit --no-fund --registry=https://registry.npmjs.org
       - name: Framework behavior and native Windows adapter
+        if: ${{ !inputs.cli_only }}
         run: |
           $tests = @(Get-ChildItem -LiteralPath test -Filter '*.test.js' -File | ForEach-Object FullName)
           if (-not $tests.Count) { throw 'No framework tests found' }
@@ -46,6 +52,7 @@ jobs:
           if ($text -notmatch '(?m)^# skipped 0$' -or $text -notmatch '(?m)^ok \d+ - Windows adapter passes UTF-8' -or $text -notmatch '(?m)^# pass (\d+)$') { throw 'Native test did not run, or a test was skipped' }
           Write-Output "WINDOWS TESTS PASS count=$($Matches[1]) skipped=0"
       - name: Installed CLI, PowerShell shim, HTTP and durable upgrade
+        if: ${{ !inputs.cli_only }}
         run: npm.cmd run compat:check
       - name: Official native Codex without user credentials
         if: matrix.node == '24.x'

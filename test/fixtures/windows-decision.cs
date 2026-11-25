@@ -15,6 +15,10 @@ class DecisionFixture {
         if (output == null || !File.Exists(schema) || Value(args, "-m") != "验收 模型") return 2;
         string turn;
         using (var input = new StreamReader(Console.OpenStandardInput(), utf8)) turn = input.ReadToEnd();
+        if (turn.Contains("记录参数")) {
+            string home = Environment.GetEnvironmentVariable("CODEX_HOME");
+            File.WriteAllText(Path.Combine(home, "adapter-argv"), String.Join("\0", args), utf8);
+        }
         if (turn.Contains("等待取消")) {
             var home = Environment.GetEnvironmentVariable("CODEX_HOME");
             var marker = Path.Combine(home, "started");
